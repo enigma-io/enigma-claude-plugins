@@ -1,0 +1,31 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "enigma-plugins",
+  "description": "Claude Code marketplace for the Enigma API plugin",
+  "owner": {
+    "name": "Enigma",
+    "email": "engineering@enigma.com"
+  },
+  "plugins": [
+    {
+      "name": "enigma-api",
+      "source": "./plugins/enigma-api",
+      "description": "Query Enigma APIs \u2014 GraphQL business data, KYB verification, sanctions screening, and government archive records",
+      "version": "1.1.0",
+      "author": {
+        "name": "Jarrod Parker"
+      },
+      "category": "integrations",
+      "tags": [
+        "api",
+        "graphql",
+        "kyb",
+        "screening",
+        "sanctions",
+        "gov-archive",
+        "business-data",
+        "enigma"
+      ]
+    }
+  ]
+}
