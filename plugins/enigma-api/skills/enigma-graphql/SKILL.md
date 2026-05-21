@@ -298,6 +298,27 @@ See `examples/discovery/01_coffee_shops_zip.md` for a complete working example.
 
 **Key pattern**: Use `prompt` on `SearchInput` with `conditions.filter` to narrow by geography/status:
 
+```graphql
+query DiscoverBrands($searchInput: SearchInput!) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        operatingLocations(first: 5) {
+          edges {
+            node {
+              names { name }
+              addresses { street1 city state zip }
+              phoneNumbers { phoneNumber }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ```json
 {
   "searchInput": {
@@ -310,7 +331,7 @@ See `examples/discovery/01_coffee_shops_zip.md` for a complete working example.
           { "EQ": ["operatingLocations.operatingStatuses.operatingStatus", "Open"] }
         ]
       },
-      "limit": 50
+      "limit": 10
     }
   }
 }
@@ -321,6 +342,20 @@ See `examples/discovery/01_coffee_shops_zip.md` for a complete working example.
 Alternative to BRAND+prompt. Use `OPERATING_LOCATION` with `brands.industries.industryDesc` for **precise** industry label matching.
 
 See `examples/discovery/11_ol_industry_discovery.md` for a complete working example.
+
+```graphql
+query OLByIndustry($searchInput: SearchInput!) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        addresses { street1 city state zip }
+        operatingStatuses { operatingStatus }
+      }
+    }
+  }
+}
+```
 
 **BRAND+prompt vs OPERATING_LOCATION+industry filter**:
 - Use `BRAND` + `prompt` for semantic discovery (e.g., "trendy coffee shop") — flexible but may include adjacent categories
@@ -334,11 +369,86 @@ See `examples/kyb/02_officers_lookup.md` for a complete working example.
 
 **Key pattern**: Officers are on `Registration.roles`, NOT `LegalEntity.persons` (which is usually empty).
 
+```graphql
+query BrandOfficers($searchInput: SearchInput!) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        legalEntities(first: 10) {
+          edges {
+            node {
+              names { name }
+              registeredEntities(first: 10) {
+                edges {
+                  node {
+                    registrations(first: 10) {
+                      edges {
+                        node {
+                          roles(first: 20) {
+                            edges {
+                              node {
+                                names { firstName lastName fullName }
+                                jobTitle
+                                roleType
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ### KYB: Full Verification with TINs, Watchlists, Bankruptcies
 
 Search `LEGAL_ENTITY` directly for compliance data including TIN validity, watchlist screening, and bankruptcy records.
 
 See `examples/kyb/10_kyb_verify.md` for verification queries and registration interpretation guidance.
+
+```graphql
+query KYBVerify($searchInput: SearchInput!) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        tins { tin tinType tinStatus }
+        isFlaggedByWatchlistEntries(first: 5) {
+          edges { node { watchlistName entityName } }
+        }
+        bankruptcies(first: 5) {
+          edges { node { caseNumber filingDate } }
+        }
+        registeredEntities(first: 5) {
+          edges {
+            node {
+              formationYear
+              registrations(first: 5) {
+                edges {
+                  node {
+                    registrationStatus
+                    registrationType
+                    jurisdiction
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ### Person Search: Find Someone's Companies
 
@@ -346,6 +456,47 @@ Use `PERSON` entity type with `person: { firstName, lastName }`, then traverse:
 `Person → legalEntities → roles → registrations → registeredEntities`
 
 See `examples/person_search/04_find_person_companies.md` for a complete working example.
+
+```graphql
+query PersonCompanies($searchInput: SearchInput!) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { firstName lastName fullName }
+        legalEntities(first: 10) {
+          edges {
+            node {
+              names { name }
+              roles(first: 10) {
+                edges {
+                  node {
+                    jobTitle
+                    roleType
+                    registrations(first: 5) {
+                      edges {
+                        node {
+                          registeredEntities(first: 5) {
+                            edges {
+                              node {
+                                names { name }
+                                formationYear
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ### Revenue: Brand-Level Card Transactions
 
@@ -355,20 +506,73 @@ Card transactions are available on both `Brand` and `OperatingLocation` entities
 
 **Standard filter** for most recent 12-month aggregate revenue:
 
+```graphql
+query BrandRevenue($searchInput: SearchInput!, $txnConditions: Conditions) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        cardTransactions(first: 10, conditions: $txnConditions) {
+          edges {
+            node {
+              projectedQuantity
+              quantityType
+              period
+              periodEndDate
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ```json
 {
-  "filter": { "AND": [
-    { "EQ": ["period", "12m"] },
-    { "EQ": ["quantityType", "card_revenue_amount"] },
-    { "EQ": ["rank", 0] },
-    { "IS_NULL": ["platformBrandId"] }
-  ]}
+  "txnConditions": {
+    "filter": { "AND": [
+      { "EQ": ["period", "12m"] },
+      { "EQ": ["quantityType", "card_revenue_amount"] },
+      { "EQ": ["rank", 0] },
+      { "IS_NULL": ["platformBrandId"] }
+    ]}
+  }
 }
 ```
 
 **CRITICAL**: The `IS_NULL: ["platformBrandId"]` filter is **mandatory** at Brand level. Without it, revenue appears **2x-5x inflated** due to aggregate + per-platform records being summed. At OL level, do NOT use this filter — `platformBrandId` doesn't exist on OL transactions.
 
+**Chain resolution warning**: Brand-level revenue covers the **entire chain**. If the user asks about a single franchise location, use `OPERATING_LOCATION` with a street address instead. See the Franchise & Chain Resolution section above.
+
 See `examples/revenue/06_brand_revenue.md` for a complete working example with multiple metrics.
+
+### Operating Location Revenue (Per-Location)
+
+For per-location revenue without the chain aggregation, search `OPERATING_LOCATION` with a street address:
+
+```graphql
+query OLRevenue($searchInput: SearchInput!, $txnConditions: Conditions) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        addresses { street1 city state zip }
+        cardTransactions(first: 10, conditions: $txnConditions) {
+          edges {
+            node {
+              projectedQuantity
+              quantityType
+              period
+              periodEndDate
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ### Locations: Filter by State/City
 
@@ -377,8 +581,24 @@ See `examples/revenue/06_brand_revenue.md` for a complete working example with m
 Instead: Search `BRAND` by name, then filter `operatingLocations` connection server-side:
 
 ```graphql
-operatingLocations(first: 100, conditions: $locConditions) {
-  edges { node { ... } }
+query BrandLocations($searchInput: SearchInput!, $locConditions: Conditions) {
+  search(searchInput: $searchInput) {
+    edges {
+      node {
+        names { name }
+        operatingLocations(first: 100, conditions: $locConditions) {
+          edges {
+            node {
+              names { name }
+              addresses { street1 city state zip }
+              phoneNumbers { phoneNumber }
+              operatingStatuses { operatingStatus }
+            }
+          }
+        }
+      }
+    }
+  }
 }
 ```
 

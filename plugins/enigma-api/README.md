@@ -1,6 +1,6 @@
 # enigma-api
 
-Query Enigma APIs — GraphQL business data, KYB verification, sanctions screening, and government archive records. Claude automatically uses the appropriate skill based on what you're asking about.
+Query Enigma APIs — GraphQL business data, KYB verification, and sanctions screening. Claude automatically uses the appropriate skill based on what you're asking about.
 
 ## Installation
 
@@ -50,16 +50,6 @@ Screen persons and organizations against sanctions, PEP, and watchlist databases
 "Check if Acme International Trading is on any watchlists"
 "Run a sanctions screening on John Smith"
 "Screen this text for sanctioned entities: 'Payment to Bank of Russia'"
-```
-
-### enigma-gov-archive
-
-Search government archive public records — violations, licenses, liens, legal actions, debarments, and contracts.
-
-```
-"Search government records for Blue Bottle Coffee"
-"Find any violations or liens for Acme Corp"
-"Check government archives for Smith Construction LLC"
 ```
 
 ## Supported Entity Types (GraphQL)

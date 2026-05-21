@@ -31,7 +31,7 @@ SSH:
 
 | Plugin | Description |
 | --- | --- |
-| `enigma-api` | Query Enigma APIs — GraphQL business data, KYB verification, sanctions screening, and government archive records |
+| `enigma-api` | Query Enigma APIs — GraphQL business data, KYB verification, and sanctions screening |
 
 ## Prerequisites
 

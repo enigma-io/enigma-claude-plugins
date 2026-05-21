@@ -1,7 +1,7 @@
 {
   "name": "enigma-api",
-  "description": "Query Enigma APIs — GraphQL business data, KYB verification, sanctions screening, and government archive records",
-  "version": "1.1.0",
+  "description": "Query Enigma APIs — GraphQL business data, KYB verification, and sanctions screening",
+  "version": "1.2.0",
   "author": {
     "name": "Jarrod Parker"
   }

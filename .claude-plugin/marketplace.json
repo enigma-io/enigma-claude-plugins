@@ -10,8 +10,8 @@
     {
       "name": "enigma-api",
       "source": "./plugins/enigma-api",
-      "description": "Query Enigma APIs \u2014 GraphQL business data, KYB verification, sanctions screening, and government archive records",
-      "version": "1.1.0",
+      "description": "Query Enigma APIs \u2014 GraphQL business data, KYB verification, and sanctions screening",
+      "version": "1.2.0",
       "author": {
         "name": "Jarrod Parker"
       },
@@ -22,7 +22,6 @@
         "kyb",
         "screening",
         "sanctions",
-        "gov-archive",
         "business-data",
         "enigma"
       ]
