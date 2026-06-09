@@ -6,9 +6,12 @@ Fetch ALL available connections and scalar fields for a brand — a complete dat
 
 ## Key Concepts
 
-- Includes `activities`, `isMarketables`, `locationDescriptions` (often overlooked scalar connections)
+- `search` returns `[SearchUnion]` — select with `__typename` + `... on Brand { }`, never `edges { node }` on `search` itself
+- Every nested field is a Relay connection: `field(first: N) { edges { node { ... } } }` — always give `first`
+- Includes `activities`, `isMarketables`, `locationDescriptions`, `revenueQualities` (often-overlooked connections)
+- Brand-level card transactions always need `IS_NULL: ["platformBrandId"]` and have NO `rawQuantity` (only OL-level card transactions expose `rawQuantity`)
+- `LegalEntity.types` node field is `legalEntityType` (not `type`); `Tin` fields are `tin`, `tinType`, `validity`
 - Use the Pagination Template to fetch more of any connection
-- Brand-level card transactions always need `IS_NULL: ["platformBrandId"]`
 
 ---
 
@@ -17,29 +20,31 @@ Fetch ALL available connections and scalar fields for a brand — a complete dat
 ```graphql
 query FullBrand($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Brand {
       id
-      names { edges { node { name } } }
-      websites { edges { node { website domain } } }
-      industries { edges { node { industryDesc industryCode industryType } } }
-      revenueQualities { edges { node { issueReason issueSeverity issueDescription } } }
-      isMarketables { edges { node { isMarketable } } }
-      locationDescriptions { edges { node { locationDescription } } }
-      activities { edges { node { activityType } } }
+      names(first: 5) { edges { node { name } } }
+      websites(first: 5) { edges { node { website domain } } }
+      industries(first: 10) { edges { node { industryDesc industryCode industryType } } }
+      revenueQualities(first: 5) { edges { node { issueReason issueSeverity issueDescription } } }
+      isMarketables(first: 1) { edges { node { isMarketable } } }
+      locationDescriptions(first: 5) { edges { node { locationDescription } } }
+      activities(first: 5) { edges { node { activityType } } }
       cardTransactions(first: 1, conditions: { filter: { AND: [
         { EQ: ["period", "12m"] }
         { EQ: ["quantityType", "card_revenue_amount"] }
-        { EQ: ["rank", 0] }
         { IS_NULL: ["platformBrandId"] }
       ] } }) {
-        edges { node { projectedQuantity rawQuantity periodStartDate periodEndDate } }
+        edges { node { projectedQuantity periodStartDate periodEndDate } }
       }
       legalEntities(first: 10) {
         edges {
           node {
-            names { edges { node { name } } }
-            types { edges { node { type } } }
-            tins { edges { node { tin } } }
+            names(first: 1) { edges { node { name } } }
+            types(first: 3) { edges { node { legalEntityType } } }
+            tins(first: 3) { edges { node { tin tinType validity } } }
+            registeredEntities(first: 1) { edges { node { name registeredEntityType formationYear } } }
+            bankruptcies(first: 1) { edges { node { caseNumber chapterType filingDate } } }
           }
         }
       }
@@ -47,10 +52,17 @@ query FullBrand($searchInput: SearchInput!) {
         pageInfo { hasNextPage endCursor }
         edges {
           node {
-            names { edges { node { name } } }
+            names(first: 1) { edges { node { name } } }
             addresses(first: 1) { edges { node { fullAddress } } }
             operatingStatuses(first: 1) { edges { node { operatingStatus } } }
             phoneNumbers(first: 1) { edges { node { phoneNumber } } }
+            cardTransactions(first: 1, conditions: { filter: { AND: [
+              { EQ: ["period", "12m"] }
+              { EQ: ["quantityType", "card_revenue_amount"] }
+            ] } }) {
+              edges { node { projectedQuantity rawQuantity periodEndDate } }
+            }
+            reviewSummaries(first: 1) { edges { node { reviewScoreAvg reviewCount } } }
           }
         }
       }
@@ -61,9 +73,11 @@ query FullBrand($searchInput: SearchInput!) {
 
 ```json
 {
-  "searchInput": { "name": "Warby Parker", "entityType": "BRAND" }
+  "searchInput": { "name": "Chipotle", "entityType": "BRAND", "conditions": { "limit": 1 } }
 }
 ```
+
+> Note: OL-level `cardTransactions` expose both `rawQuantity` and `projectedQuantity` and do NOT need the `platformBrandId` filter. Brand-level `cardTransactions` expose only `projectedQuantity` and REQUIRE `IS_NULL: ["platformBrandId"]`.
 
 ---
 
@@ -73,23 +87,25 @@ Use the **Pagination Template** (`references/pagination_template.py`) to fetch m
 
 1. Run the query above to get the first page
 2. Check `operatingLocations.pageInfo.hasNextPage`
-3. If true, use the pagination template with `operatingLocations(first: 100, after: $cursor)`
+3. If true, re-query with `operatingLocations(first: 100, after: $cursor)`
 
 ### Additional Fields You Can Add
 
 | Connection | Useful Fields |
 |---|---|
-| `operatingLocations → cardTransactions` | Per-location revenue (no `platformBrandId` filter needed at OL level) |
-| `operatingLocations → reviewSummaries` | `reviewScoreAvg`, `reviewCount` |
-| `operatingLocations → technologiesUseds` | Technology stack |
-| `operatingLocations → ranks` | Ranking data |
-| `legalEntities → registeredEntities` | Formation year, entity type, registrations |
-| `legalEntities → bankruptcies` | Bankruptcy records |
+| `operatingLocations → cardTransactions` | Per-location revenue: `rawQuantity`, `projectedQuantity` (no `platformBrandId` filter at OL level) |
+| `operatingLocations → reviewSummaries` | `reviewScoreAvg`, `reviewCount`, `firstReviewDate`, `lastReviewDate` |
+| `operatingLocations → roles` | Contacts: `jobTitle`, `jobFunction`, `managementLevel` |
+| `legalEntities → registeredEntities` | `formationYear`, `registeredEntityType`, plus `registrations` |
+| `legalEntities → bankruptcies` | `caseNumber`, `chapterType`, `filingDate`, `debtorName` |
 
 ---
 
 ## Common Mistakes to Avoid
 
 1. **Forgetting `IS_NULL: ["platformBrandId"]`** on brand card transactions — revenue inflated 2x-5x
-2. **Requesting `totalCount`** on connections — causes HTTP 400. Use `hasNextPage` instead
-3. **Querying `cardTransactions` without filters** — returns hundreds of records. Always filter by `period`, `quantityType`, and `rank`
+2. **Requesting `rawQuantity` on brand-level `cardTransactions`** — 400; only OL-level card transactions have it
+3. **Using `type` on `LegalEntity.types`** — the field is `legalEntityType`
+4. **Requesting `totalCount`** on connections — causes HTTP 400. Use `pageInfo { hasNextPage }` instead
+5. **Querying `cardTransactions` without filters** — returns hundreds of records. Always filter by `period` and `quantityType` (and `platformBrandId` at brand level)
+6. **Plain `names { name }`** — every nested field is a connection: `names(first: 1) { edges { node { name } } }`

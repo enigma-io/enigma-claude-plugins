@@ -7,7 +7,9 @@ Assess risk for a brand by checking revenue quality issues, transaction data, an
 ## Key Concepts
 
 - `revenueQualities` connection has `issueReason`, `issueSeverity`, `issueDescription`
+- Every nested field is a Relay connection — always request `(first: N) { edges { node { ... } } }`
 - Card transactions: use separate conditions for revenue amount vs transaction count
+- Brand card transactions are `projectedQuantity` only and REQUIRE `IS_NULL: ["platformBrandId"]`
 - Count active vs closed locations by paginating `operatingLocations` and grouping by `operatingStatus`
 - Pick the aggregate record (`platformBrandId` = null) for headline numbers
 
@@ -20,15 +22,15 @@ query RiskBrand($searchInput: SearchInput!, $revCond: ConnectionConditions!, $tx
   search(searchInput: $searchInput) {
     ... on Brand {
       id
-      names { edges { node { name } } }
-      revenueQualities { edges { node { issueReason issueSeverity issueDescription } } }
+      names(first: 1) { edges { node { name } } }
+      revenueQualities(first: 10) { edges { node { issueReason issueSeverity issueDescription } } }
       revenue: cardTransactions(first: 1, conditions: $revCond) {
-        edges { node { projectedQuantity rawQuantity periodStartDate periodEndDate } }
+        edges { node { projectedQuantity periodStartDate periodEndDate } }
       }
       transactions: cardTransactions(first: 1, conditions: $txnCond) {
         edges { node { projectedQuantity } }
       }
-      operatingLocations(first: 100) {
+      operatingLocations(first: 50) {
         pageInfo { hasNextPage endCursor }
         edges {
           node {
@@ -44,11 +46,15 @@ query RiskBrand($searchInput: SearchInput!, $revCond: ConnectionConditions!, $tx
 
 ```json
 {
-  "searchInput": { "name": "Pizza Hut", "entityType": "BRAND" },
-  "revCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }, { "EQ": ["rank", 0] }, { "IS_NULL": ["platformBrandId"] }] } },
-  "txnCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_transactions_count"] }, { "EQ": ["rank", 0] }, { "IS_NULL": ["platformBrandId"] }] } }
+  "searchInput": { "name": "Pizza Hut", "entityType": "BRAND", "conditions": { "limit": 1 } },
+  "revCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }, { "IS_NULL": ["platformBrandId"] }] } },
+  "txnCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_transactions_count"] }, { "IS_NULL": ["platformBrandId"] }] } }
 }
 ```
+
+Live result (Pizza Hut, trailing 12m): revenue `projectedQuantity` ≈ `3,112,627,992`. `revenueQualities` was empty here (no flagged issues) — see below for how to interpret a non-empty result.
+
+> Note: `revenue`/`transactions` request `projectedQuantity` only. There is no `rawQuantity` at the Brand level.
 
 ---
 
@@ -63,7 +69,7 @@ query RiskBrand($searchInput: SearchInput!, $revCond: ConnectionConditions!, $tx
 
 ### Active vs Closed Locations
 
-Paginate `operatingLocations` (max 3 pages), then count by status in Python:
+Paginate `operatingLocations` (use `pageInfo.endCursor` as the next `after`), then count by status in Python:
 
 ```python
 statuses = {}
@@ -81,19 +87,22 @@ Pick the aggregate record (`platformBrandId` = null via the `IS_NULL` filter) fo
 
 ## Single Location Risk Check
 
-For location-level risk, use `OPERATING_LOCATION` search:
+For location-level risk, use `OPERATING_LOCATION` search with an `address` (the `street1` AddressInput field aids resolution). At the OL level card transactions expose both `rawQuantity` and `projectedQuantity` and do NOT take `platformBrandId`.
 
 ```graphql
 query LocationCheck($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
     ... on OperatingLocation {
       id
-      names { edges { node { name } } }
-      addresses { edges { node { fullAddress } } }
-      phoneNumbers { edges { node { phoneNumber } } }
-      operatingStatuses { edges { node { operatingStatus } } }
-      locationTypes { edges { node { locationType } } }
-      reviewSummaries { edges { node { reviewScoreAvg reviewCount firstReviewDate lastReviewDate } } }
+      names(first: 1) { edges { node { name } } }
+      addresses(first: 1) { edges { node { fullAddress } } }
+      phoneNumbers(first: 1) { edges { node { phoneNumber } } }
+      operatingStatuses(first: 1) { edges { node { operatingStatus } } }
+      locationTypes(first: 3) { edges { node { locationType } } }
+      reviewSummaries(first: 1) { edges { node { reviewScoreAvg reviewCount firstReviewDate lastReviewDate } } }
+      cardTransactions(first: 1, conditions: { filter: { AND: [{ EQ: ["period", "12m"] }, { EQ: ["quantityType", "card_revenue_amount"] }] } }) {
+        edges { node { projectedQuantity rawQuantity } }
+      }
     }
   }
 }
@@ -104,15 +113,19 @@ query LocationCheck($searchInput: SearchInput!) {
   "searchInput": {
     "name": "Walmart",
     "entityType": "OPERATING_LOCATION",
-    "address": { "street1": "702 SW 8th St", "city": "Bentonville", "state": "AR" }
+    "address": { "street1": "406 S Walton Blvd", "city": "Bentonville", "state": "AR" }
   }
 }
 ```
+
+Live result (Walmart Supercenter, 406 S Walton Blvd, Bentonville AR): status `Open`, `reviewScoreAvg` "4.10", `reviewCount` "6001".
 
 ---
 
 ## Common Mistakes to Avoid
 
-1. **Missing `IS_NULL: ["platformBrandId"]`** — without this, revenue is inflated 2x-5x
-2. **Summing all `cardTransactions` records** — only use the aggregate record (filtered by `IS_NULL`)
-3. **Not paginating locations** — first page only shows up to 100; use pagination template for full count
+1. **Missing `IS_NULL: ["platformBrandId"]`** on brand card transactions — revenue inflated 2x-5x
+2. **Requesting `rawQuantity` at the Brand level** — it exists only on OL nodes
+3. **Bare connections** (`names { ... }` without `(first: N) { edges { node } }`) — every nested field is a Relay connection
+4. **Summing all `cardTransactions` records** — at Brand level use the aggregate record (filtered by `IS_NULL`)
+5. **Not paginating locations** — first page is capped; use `pageInfo.endCursor` for full counts

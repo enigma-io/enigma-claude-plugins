@@ -7,9 +7,11 @@ Verify a business for compliance — check registrations, TIN validity, watchlis
 ## Key Concepts
 
 - Use `entityType: LEGAL_ENTITY` with `name` (+ optional `address.state`)
-- TINs include `validity` field for verification status
+- TINs include `validity` field for verification status (NOT `tinStatus`)
 - Officers are on `Registration.roles`, NOT `LegalEntity.persons` (usually empty)
 - Filter out registered agents/applicants/unknown — they're service providers, not officers
+- `search` returns `[SearchUnion]` — select with `__typename` + `... on LegalEntity`. Every nested field is a Relay connection (`field(first: N) { edges { node { ... } } }`).
+- `WatchlistEntry` exposes only `watchlistName`. `RegisteredEntity` has BOTH `formationYear` (Int) and `formationDate` (Date).
 
 ---
 
@@ -18,23 +20,25 @@ Verify a business for compliance — check registrations, TIN validity, watchlis
 ```graphql
 query KYBVerify($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on LegalEntity {
       id
-      names { edges { node { name } } }
-      types { edges { node { type } } }
-      tins { edges { node { tin tinType validity } } }
-      addresses { edges { node { fullAddress } } }
-      registeredEntities {
+      names(first: 5) { edges { node { name } } }
+      types(first: 5) { edges { node { legalEntityType } } }
+      tins(first: 5) { edges { node { tin tinType validity } } }
+      addresses(first: 3) { edges { node { fullAddress } } }
+      registeredEntities(first: 5) {
         edges {
           node {
             name
             registeredEntityType
             formationYear
+            formationDate
             registrations(first: 5) {
               edges {
                 node {
-                  jurisdictionCode
                   registrationState
+                  jurisdictionType
                   fileNumber
                   status
                   registrationType
@@ -46,13 +50,13 @@ query KYBVerify($searchInput: SearchInput!) {
           }
         }
       }
-      isFlaggedByWatchlistEntries {
-        edges { node { watchlistName watchlistEntryId } }
+      isFlaggedByWatchlistEntries(first: 5) {
+        edges { node { watchlistName } }
       }
-      appearsOnWatchlistEntries {
-        edges { node { watchlistName watchlistEntryId } }
+      appearsOnWatchlistEntries(first: 5) {
+        edges { node { watchlistName } }
       }
-      bankruptcies {
+      bankruptcies(first: 5) {
         edges { node { caseNumber filingDate chapterType debtorName dateTerminated } }
       }
     }
@@ -63,12 +67,13 @@ query KYBVerify($searchInput: SearchInput!) {
 ```json
 {
   "searchInput": {
-    "name": "Acme Corp",
-    "entityType": "LEGAL_ENTITY",
-    "address": { "state": "IL" }
+    "name": "Sweetgreen",
+    "entityType": "LEGAL_ENTITY"
   }
 }
 ```
+
+> Compliance connections (`tins`, watchlists, `bankruptcies`) legitimately return empty edges for clean entities — that is a valid, error-free result.
 
 ---
 
@@ -76,15 +81,16 @@ query KYBVerify($searchInput: SearchInput!) {
 
 **IMPORTANT**: `LegalEntity.persons` is usually EMPTY. People are found on **registration records** via roles. Individuals (e.g., "Hicham Oudghiri") are modeled as `LegalEntity` nodes linked to `Registration` records via `Role` edges.
 
-The traversal path is: `LegalEntity → registeredEntities → registrations → roles → legalEntities → names`
+The traversal path is: `LegalEntity → registeredEntities → registrations → roles → legalEntities → names` (and, for structured person names, `→ legalEntities → persons → names { firstName lastName fullName }`).
 
 ```graphql
 query KYBOfficers($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on LegalEntity {
       id
-      names { edges { node { name } } }
-      registeredEntities {
+      names(first: 3) { edges { node { name } } }
+      registeredEntities(first: 5) {
         edges {
           node {
             name
@@ -106,7 +112,16 @@ query KYBOfficers($searchInput: SearchInput!) {
                         legalEntities(first: 3) {
                           edges {
                             node {
-                              names { edges { node { name } } }
+                              names(first: 1) { edges { node { name } } }
+                              persons(first: 1) {
+                                edges {
+                                  node {
+                                    names(first: 1) {
+                                      edges { node { firstName lastName fullName } }
+                                    }
+                                  }
+                                }
+                              }
                             }
                           }
                         }
@@ -127,9 +142,8 @@ query KYBOfficers($searchInput: SearchInput!) {
 ```json
 {
   "searchInput": {
-    "name": "Enigma Technologies Inc",
-    "entityType": "LEGAL_ENTITY",
-    "address": { "state": "NY" }
+    "name": "Tacombi",
+    "entityType": "LEGAL_ENTITY"
   }
 }
 ```
@@ -170,7 +184,9 @@ Roles with `jobTitle` of `registered agent`, `applicant`, or `unknown` are typic
 
 ## Common Mistakes to Avoid
 
-1. **Using `LegalEntity.persons` to find officers** — usually empty. Traverse via registration roles.
+1. **Using `LegalEntity.persons` on the searched entity to find officers** — usually empty at the top level. Traverse via registration roles, then read the role's `legalEntities` (and its `persons`).
 2. **Assuming `homeJurisdictionState` identifies the home state** — it's always null on domestic registrations. Find the domestic registration first.
 3. **Showing all registrations equally** — distinguish domestic (home) from foreign (authorized in other states).
 4. **Including registered agents as officers** — they're service providers, not company officers.
+5. **Using `jurisdictionCode` or `jurisdiction` on `Registration`** — the fields are `registrationState` and `jurisdictionType`.
+6. **Selecting `type` on `types` or `tinStatus` on `tins`** — use `legalEntityType` and `validity`. `WatchlistEntry` has only `watchlistName` (no `entityName`/`watchlistEntryId`).

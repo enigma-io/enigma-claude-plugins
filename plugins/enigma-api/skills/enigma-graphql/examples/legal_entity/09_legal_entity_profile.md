@@ -22,6 +22,7 @@ Look up a legal entity to get formation info, registration address, entity type,
     entityType: LEGAL_ENTITY
     name: "45 Mercer Restaurant LLC"
   }) {
+    __typename
     ... on LegalEntity {
       legalEntityNames: registeredEntities(first: 1) {
         edges { node { name } }

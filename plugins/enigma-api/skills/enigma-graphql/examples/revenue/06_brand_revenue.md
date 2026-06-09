@@ -5,9 +5,10 @@ For card transaction field reference, see `references/card_transactions.md`.
 ## Key Concepts
 
 - Brand-level card transactions ALWAYS require `IS_NULL: ["platformBrandId"]`
-- OL-level card transactions do NOT use `platformBrandId` (field doesn't exist)
+- Brand-level nodes expose `projectedQuantity` only — there is **no** `rawQuantity` at the Brand level
+- OL-level card transactions expose BOTH `rawQuantity` and `projectedQuantity`, and do NOT use `platformBrandId` (field doesn't exist)
 - Franchise/chain warning: brand-level revenue = entire chain, not single location
-- For 2+ metrics, use explicit `periodEndDate` instead of `rank=0` for temporal consistency
+- Records come back `periodEndDate`-descending; `first: 1` = latest snapshot, `first: 12` = last 12 periods
 - `has_transactions` (OL only) is the only metric guaranteed non-null
 
 ---
@@ -23,7 +24,7 @@ query BrandRevenue($searchInput: SearchInput!, $revCond: ConnectionConditions!, 
       id
       names(first: 1) { edges { node { name } } }
       revenue: cardTransactions(first: 1, conditions: $revCond) {
-        edges { node { projectedQuantity rawQuantity periodStartDate periodEndDate } }
+        edges { node { projectedQuantity periodStartDate periodEndDate } }
       }
       transactions: cardTransactions(first: 1, conditions: $txnCond) {
         edges { node { projectedQuantity } }
@@ -35,12 +36,11 @@ query BrandRevenue($searchInput: SearchInput!, $revCond: ConnectionConditions!, 
 
 ```json
 {
-  "searchInput": { "name": "Tacombi", "entityType": "BRAND", "conditions": { "limit": 1 } },
+  "searchInput": { "name": "Sweetgreen", "entityType": "BRAND", "conditions": { "limit": 1 } },
   "revCond": {
     "filter": { "AND": [
       { "EQ": ["period", "12m"] },
       { "EQ": ["quantityType", "card_revenue_amount"] },
-      { "EQ": ["rank", 0] },
       { "IS_NULL": ["platformBrandId"] }
     ]}
   },
@@ -48,36 +48,55 @@ query BrandRevenue($searchInput: SearchInput!, $revCond: ConnectionConditions!, 
     "filter": { "AND": [
       { "EQ": ["period", "12m"] },
       { "EQ": ["quantityType", "card_transactions_count"] },
-      { "EQ": ["rank", 0] },
       { "IS_NULL": ["platformBrandId"] }
     ]}
   }
 }
 ```
 
+Live result (Sweetgreen, trailing 12m): `projectedQuantity` ≈ `480,460,870` revenue, `20,445,869` transactions.
+
+> Note: there is **no** `rawQuantity` field at the Brand level — requesting it returns a validation error. Use `projectedQuantity` (the estimated total).
+
 ---
 
 ## Brand Revenue Time Series (for charts)
 
-Monthly revenue over time — use `period: "1m"` without rank filter:
+Monthly revenue over time — use `period: "1m"`:
 
-```json
-{
-  "filter": { "AND": [
-    { "EQ": ["period", "1m"] },
-    { "EQ": ["quantityType", "card_revenue_amount"] },
-    { "IS_NULL": ["platformBrandId"] }
-  ]}
+```graphql
+query BrandRevenueSeries($searchInput: SearchInput!, $seriesCond: ConnectionConditions!) {
+  search(searchInput: $searchInput) {
+    ... on Brand {
+      names(first: 1) { edges { node { name } } }
+      series: cardTransactions(first: 60, conditions: $seriesCond) {
+        edges { node { projectedQuantity periodStartDate periodEndDate } }
+      }
+    }
+  }
 }
 ```
 
-Use `first: 60` for 5 years of monthly data. Each record has `periodStartDate`/`periodEndDate` for the x-axis.
+```json
+{
+  "searchInput": { "name": "Sweetgreen", "entityType": "BRAND", "conditions": { "limit": 1 } },
+  "seriesCond": {
+    "filter": { "AND": [
+      { "EQ": ["period", "1m"] },
+      { "EQ": ["quantityType", "card_revenue_amount"] },
+      { "IS_NULL": ["platformBrandId"] }
+    ]}
+  }
+}
+```
+
+Use `first: 60` for up to 5 years of monthly data. Records are newest-first; each has `periodStartDate`/`periodEndDate` for the x-axis. (Sweetgreen Feb 2026 ≈ `34,515,305`.)
 
 ---
 
 ## Operating Location Revenue
 
-**`street1` required** for OPERATING_LOCATION searches.
+OPERATING_LOCATION searches take an `address` with `street1` (an `AddressInput` field) for reliable hits. Note the output address fields are `streetAddress1`/`city`/`state`/`zip`/`fullAddress`.
 
 ```graphql
 query LocationRevenue($searchInput: SearchInput!, $revCond: ConnectionConditions!, $txnCond: ConnectionConditions!) {
@@ -88,10 +107,10 @@ query LocationRevenue($searchInput: SearchInput!, $revCond: ConnectionConditions
       addresses(first: 1) { edges { node { fullAddress city state zip } } }
       operatingStatuses(first: 1) { edges { node { operatingStatus } } }
       revenue: cardTransactions(first: 1, conditions: $revCond) {
-        edges { node { projectedQuantity rawQuantity periodStartDate periodEndDate firstObservedDate lastObservedDate } }
+        edges { node { projectedQuantity rawQuantity periodStartDate periodEndDate } }
       }
       transactions: cardTransactions(first: 1, conditions: $txnCond) {
-        edges { node { projectedQuantity } }
+        edges { node { projectedQuantity rawQuantity } }
       }
       hasTransactions: cardTransactions(first: 1, conditions: { filter: { AND: [{ EQ: ["period", "12m"] }, { EQ: ["quantityType", "has_transactions"] }] } }) {
         edges { node { projectedQuantity } }
@@ -104,20 +123,22 @@ query LocationRevenue($searchInput: SearchInput!, $revCond: ConnectionConditions
 ```json
 {
   "searchInput": {
-    "name": "Tacombi",
+    "name": "Starbucks",
     "entityType": "OPERATING_LOCATION",
-    "address": { "street1": "255 Church St", "city": "New York", "state": "NY" }
+    "address": { "street1": "1912 Pike Pl", "city": "Seattle", "state": "WA" }
   },
-  "revCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }, { "EQ": ["rank", 0] }] } },
-  "txnCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_transactions_count"] }, { "EQ": ["rank", 0] }] } }
+  "revCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }] } },
+  "txnCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_transactions_count"] }] } }
 }
 ```
+
+Live result (Starbucks, 1912 Pike Pl, Seattle WA, trailing 12m): `projectedQuantity` ≈ `166,927`, `rawQuantity` ≈ `51,542`. At the OL level both fields are present.
 
 ---
 
 ## Per-Location Revenue from Brand Search
 
-Revenue for each location of a brand (e.g., "revenue for each Tacombi in NY"):
+Revenue for each location of a brand (e.g., "revenue for each Chipotle in WA"):
 
 ```graphql
 query BrandLocationRevenue($searchInput: SearchInput!, $locConditions: ConnectionConditions, $revCond: ConnectionConditions!) {
@@ -145,11 +166,13 @@ query BrandLocationRevenue($searchInput: SearchInput!, $locConditions: Connectio
 
 ```json
 {
-  "searchInput": { "name": "Tacombi", "entityType": "BRAND", "conditions": { "limit": 1 } },
-  "locConditions": { "filter": { "AND": [{ "EQ": ["addresses.state", "NY"] }, { "EQ": ["operatingStatuses.operatingStatus", "Open"] }] } },
-  "revCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }, { "EQ": ["rank", 0] }] } }
+  "searchInput": { "name": "Chipotle", "entityType": "BRAND", "conditions": { "limit": 1 } },
+  "locConditions": { "filter": { "AND": [{ "EQ": ["addresses.state", "WA"] }, { "EQ": ["operatingStatuses.operatingStatus", "Open"] }] } },
+  "revCond": { "filter": { "AND": [{ "EQ": ["period", "12m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }] } }
 }
 ```
+
+Note: `operatingLocations(...)` resolves to OL nodes, so the nested `cardTransactions` is OL-level — both `projectedQuantity` and `rawQuantity` are valid here, and you must NOT filter `platformBrandId`. Live result (first Chipotle in WA, 1827 15th Ave W, Seattle): `projectedQuantity` ≈ `2,329,752`.
 
 **Keep `operatingLocations(first: 5)` with nested card data.** Higher counts risk 504 timeouts.
 
@@ -157,20 +180,38 @@ query BrandLocationRevenue($searchInput: SearchInput!, $locConditions: Connectio
 
 ## OL Time Series (Monthly/Quarterly)
 
-```json
-{
-  "filter": { "AND": [{ "EQ": ["period", "1m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }] }
+```graphql
+query LocationRevenueSeries($searchInput: SearchInput!, $seriesCond: ConnectionConditions!) {
+  search(searchInput: $searchInput) {
+    ... on OperatingLocation {
+      names(first: 1) { edges { node { name } } }
+      series: cardTransactions(first: 24, conditions: $seriesCond) {
+        edges { node { projectedQuantity rawQuantity periodStartDate periodEndDate } }
+      }
+    }
+  }
 }
 ```
 
-Use `first: 24` for 2 years of monthly data. `period: "3m"` available at OL level only (not Brand).
+```json
+{
+  "searchInput": {
+    "name": "Starbucks",
+    "entityType": "OPERATING_LOCATION",
+    "address": { "street1": "1912 Pike Pl", "city": "Seattle", "state": "WA" }
+  },
+  "seriesCond": { "filter": { "AND": [{ "EQ": ["period", "1m"] }, { "EQ": ["quantityType", "card_revenue_amount"] }] } }
+}
+```
+
+Use `first: 24` for 2 years of monthly data. `period: "3m"` is available at the OL level (e.g., quarterly trend) in addition to `"1m"` and `"12m"`.
 
 ---
 
 ## Common Mistakes to Avoid
 
 1. **Missing `IS_NULL: ["platformBrandId"]`** on brand card transactions — revenue 2x-5x inflated
-2. **Using `platformBrandId` filter at OL level** — field doesn't exist
-3. **Confusing brand vs location revenue** for franchises — brand = entire chain
-4. **Requesting `card_not_present_revenue_amount`** for historical dates — only 1-3 months available, Brand-level only
-5. **Using `rank=0` with multiple metrics** — use explicit `periodEndDate` for temporal consistency
+2. **Requesting `rawQuantity` at the Brand level** — that field exists only on OL nodes; Brand has `projectedQuantity` only
+3. **Using `platformBrandId` filter at OL level** — field doesn't exist there
+4. **Confusing brand vs location revenue** for franchises — brand = entire chain
+5. **Requesting `card_not_present_revenue_amount` at the OL level** — Brand-only metric (full `12m` multi-period history available)

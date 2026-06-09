@@ -30,10 +30,11 @@ FIELD_CORRECTIONS_PATH = SCRIPT_DIR.parent / "references" / "field_corrections.j
 
 try:
     with open(FIELD_CORRECTIONS_PATH) as f:
-        FIELD_CORRECTIONS = json.load(f)["field_corrections"]
-        COMMON_MISTAKES = json.load(f)["common_mistakes"]
-except FileNotFoundError:
-    print(f"Warning: Could not load {FIELD_CORRECTIONS_PATH}", file=sys.stderr)
+        _fc = json.load(f)
+    FIELD_CORRECTIONS = _fc["field_corrections"]
+    COMMON_MISTAKES = _fc["common_mistakes"]
+except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
+    print(f"Warning: Could not load {FIELD_CORRECTIONS_PATH}: {exc}", file=sys.stderr)
     FIELD_CORRECTIONS = {}
     COMMON_MISTAKES = []
 
@@ -49,16 +50,54 @@ def validate_query(query: str, variables: Dict[str, Any] = None) -> Tuple[List[s
     warnings = []
     variables = variables or {}
     
-    # Check for incorrect field names
+    # Check for incorrect field names.
+    # Skip tokens that are valid fields in *some* context — a flat substring scan
+    # can't tell which type a selection belongs to, so flagging these produces
+    # false positives (e.g. `names` is a valid connection everywhere except `Role`;
+    # `status` is valid on Registration; `street1`/`postalCode` are valid on AddressInput;
+    # `rawQuantity` is valid on OperatingLocationCardTransaction).
+    CONTEXT_DEPENDENT = {"names", "status", "street1", "streetAddress",
+                         "postalCode", "rawQuantity", "fileNumber",
+                         "fullName", "platformBrandId"}
     for type_name, correction_info in FIELD_CORRECTIONS.items():
         for incorrect_field in correction_info.get("incorrect", []):
-            if incorrect_field and re.search(rf'\b{re.escape(incorrect_field)}\b', query):
+            if not incorrect_field or incorrect_field in CONTEXT_DEPENDENT:
+                continue
+            if re.search(rf'\b{re.escape(incorrect_field)}\b', query):
                 errors.append(
                     f"Incorrect field '{incorrect_field}' on {type_name}. "
                     f"Use '{correction_info['correct']}' instead. "
                     f"Note: {correction_info['note']}"
                 )
     
+    # Rule 1: search returns [SearchUnion] — never edges/node directly on search
+    if re.search(r'search\s*\([^)]*\)\s*\{\s*edges', query) or re.search(r'\bsearch\s*\{\s*edges', query):
+        errors.append(
+            "search returns [SearchUnion], not a connection. "
+            "Use '__typename ... on Brand { ... } ... on OperatingLocation { ... }' — never 'edges { node }' on search itself."
+        )
+
+    # Rule 2 (conservative): classic plain-connection selection on one line, e.g. 'names { name }'
+    _conn_leaf = {
+        'names': 'name', 'websites': 'website', 'industries': 'industryDesc',
+        'phoneNumbers': 'phoneNumber', 'operatingStatuses': 'operatingStatus', 'tins': 'tin',
+    }
+    for conn, leaf in _conn_leaf.items():
+        if re.search(rf'\b{conn}\s*\{{\s*{leaf}\b', query):
+            errors.append(
+                f"'{conn} {{ {leaf} }}' selects a scalar directly on a connection. "
+                f"Wrap it: {conn}(first: N) {{ edges {{ node {{ {leaf} }} }} }}."
+            )
+
+    # Connection-condition variables must be ConnectionConditions, not Conditions
+    for m in re.finditer(r'\$(\w+)\s*:\s*Conditions\b', query):
+        var = m.group(1)
+        if re.search(rf'(operatingLocations|cardTransactions|legalEntities|industries|roles|addresses|registrations)\s*\([^)]*conditions:\s*\${var}\b', query):
+            errors.append(
+                f"Variable ${var} is typed 'Conditions' but used as a connection argument. "
+                f"Connection 'conditions:' args take type 'ConnectionConditions' (filter/orderBy only)."
+            )
+
     # Check for totalCount (not supported)
     if 'totalCount' in query:
         errors.append(

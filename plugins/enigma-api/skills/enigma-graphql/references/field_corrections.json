@@ -1,106 +1,116 @@
 {
+  "_note": "Verified against live api.enigma.com 2026-05-29. The two structural rules below cause most HTTP 400s; field-name fixes follow.",
+  "structural_rules": {
+    "search_is_a_union": {
+      "wrong": "search(searchInput: $s) { edges { node { ... } } }",
+      "correct": "search(searchInput: $s) { __typename ... on Brand { ... } ... on OperatingLocation { ... } }",
+      "note": "Query.search returns [SearchUnion] (Brand|OperatingLocation|LegalEntity|Person|Address). No edges/node/first on search itself."
+    },
+    "nested_fields_are_connections": {
+      "wrong": "names { name }",
+      "correct": "names(first: 1) { edges { node { name } } }",
+      "note": "names, websites, addresses, operatingLocations, legalEntities, cardTransactions, industries, roles, tins, registeredEntities, registrations, persons, etc. are all Relay *Connection types."
+    },
+    "conditions_types": {
+      "Conditions": "searchInput.conditions and node-level aggregator conditions. Fields: filter, orderBy, limit, pageToken.",
+      "ConnectionConditions": "connection args (operatingLocations(conditions:), cardTransactions(conditions:), ...). Fields: filter, orderBy ONLY (no limit). Declare connection-condition variables as ConnectionConditions."
+    }
+  },
   "field_corrections": {
+    "Address": {
+      "incorrect": ["street1", "streetAddress", "postalCode"],
+      "correct": "streetAddress1, streetAddress2, city, state, zip, fullAddress, county, msa, csa, latitude, longitude, country",
+      "note": "OUTPUT Address type uses streetAddress1/zip. INPUT AddressInput uses street1/postalCode. Do not cross them."
+    },
     "OperatingLocationOperatingStatus": {
       "incorrect": ["status"],
       "correct": "operatingStatus",
-      "note": "The field is 'operatingStatus', NOT 'status'"
+      "note": "The field is 'operatingStatus', NOT 'status'."
     },
     "Website": {
       "incorrect": ["url"],
       "correct": "website",
-      "note": "The field is 'website', NOT 'url'"
+      "note": "The field is 'website', NOT 'url'. Also: subdomain, domain, topLevelDomain, path."
     },
     "Industry": {
       "incorrect": ["description"],
-      "correct": "industryDesc",
-      "note": "Fields are 'industryDesc', 'industryCode', 'industryType' (NOT 'description')"
+      "correct": "industryDesc, industryCode, industryType"
     },
     "Role": {
-      "incorrect": ["title"],
-      "correct": "jobTitle",
-      "note": "Fields are 'jobTitle', 'jobFunction', 'managementLevel' (NOT 'title')"
+      "incorrect": ["title", "names", "roleType", "fullName"],
+      "correct": "jobTitle, jobFunction, managementLevel, startDate, endDate",
+      "note": "Role has NO names/roleType/fullName. Reach a person's name via Role.legalEntities -> persons -> names { edges { node { firstName lastName fullName } } }."
     },
-    "Person": {
-      "incorrect": ["fullName"],
-      "correct": "names { edges { node { fullName } } }",
-      "note": "Person has nested 'names' connection with 'fullName' (NOT a direct 'fullName' field)"
+    "PersonName": {
+      "incorrect": [],
+      "correct": "firstName, lastName, fullName, dateOfBirth",
+      "note": "Person.names is a connection of PersonName. Person has no direct fullName scalar."
     },
     "BrandRevenueQuality": {
       "incorrect": ["revenueQuality"],
-      "correct": "issueReason, issueSeverity, issueDescription",
-      "note": "Fields are 'issueReason', 'issueSeverity', 'issueDescription' (NOT 'revenueQuality')"
+      "correct": "issueReason, issueSeverity, issueDescription"
     },
     "BrandActivity": {
       "incorrect": ["description"],
-      "correct": "activityType",
-      "note": "The field is 'activityType' (NOT 'description')"
+      "correct": "activityType"
     },
     "BrandCardTransaction": {
-      "incorrect": ["transactionDate", "amount", "metric", "timePeriod"],
-      "correct": "quantityType, period, rawQuantity, projectedQuantity, platformBrandId, rank, periodStartDate, periodEndDate, datasetIds",
-      "note": "Use 'projectedQuantity' for revenue amounts, 'period' for time period, 'rank' for time ordering. See Card Transactions section for proper usage."
+      "incorrect": ["transactionDate", "amount", "metric", "timePeriod", "rawQuantity"],
+      "correct": "quantityType, period, projectedQuantity, platformBrandId, periodStartDate, periodEndDate",
+      "note": "Brand level has projectedQuantity only (NO rawQuantity). 'rank' is a valid FILTER path but not a returned scalar. Filter platformBrandId IS_NULL at brand level."
+    },
+    "OperatingLocationCardTransaction": {
+      "incorrect": ["platformBrandId"],
+      "correct": "quantityType, period, rawQuantity, projectedQuantity, periodStartDate, periodEndDate",
+      "note": "OL level has BOTH rawQuantity and projectedQuantity, and NO platformBrandId. Do not filter platformBrandId at OL level."
     },
     "ReviewSummary": {
       "incorrect": ["averageRating"],
-      "correct": "reviewScoreAvg",
-      "note": "The field is 'reviewScoreAvg' (NOT 'averageRating'). Also available: 'reviewCount', 'firstReviewDate', 'lastReviewDate'"
+      "correct": "reviewScoreAvg, reviewCount, firstReviewDate, lastReviewDate",
+      "note": "reviewScoreAvg and reviewCount are Strings."
+    },
+    "Tin": {
+      "incorrect": ["tinStatus", "status"],
+      "correct": "tin, tinType, validity",
+      "note": "Validity field is 'validity', NOT 'tinStatus'."
     },
     "RegisteredEntity": {
-      "incorrect": ["jurisdictionCode", "fileNumber", "status"],
-      "correct": "name, registeredEntityType, formationYear (Int)",
-      "note": "RegisteredEntity has 'name', 'registeredEntityType', 'formationYear' (Int, NOT formationDate). Traverse 'registrations' connection for 'jurisdictionCode', 'fileNumber', 'status'"
+      "incorrect": ["jurisdictionCode"],
+      "correct": "name, registeredEntityType, formationYear (Int), formationDate (Date)",
+      "note": "Both formationYear (Int) and formationDate (Date) exist. fileNumber/status/jurisdiction live on the nested 'registrations' connection."
+    },
+    "Registration": {
+      "incorrect": ["registrationStatus", "jurisdiction"],
+      "correct": "status, subStatus, statusDetail, registrationType, registrationState, jurisdictionType, homeJurisdictionState, registeredName, fileNumber, issueDate, expirationDate",
+      "note": "Status field is 'status' (NOT 'registrationStatus'). Jurisdiction is 'registrationState'/'jurisdictionType'/'homeJurisdictionState' (no field named 'jurisdiction'). Registration.roles holds officers/agents."
     },
     "LegalEntity.watchlist": {
       "incorrect": ["watchlistEntries"],
-      "correct": "isFlaggedByWatchlistEntries, appearsOnWatchlistEntries",
-      "note": "Connections are 'isFlaggedByWatchlistEntries' and 'appearsOnWatchlistEntries' (NOT 'watchlistEntries')"
+      "correct": "isFlaggedByWatchlistEntries, appearsOnWatchlistEntries"
     },
     "WatchlistEntry": {
-      "incorrect": ["listName"],
+      "incorrect": ["listName", "entityName"],
       "correct": "watchlistName",
-      "note": "The field is 'watchlistName' (NOT 'listName'); edge has 'confidence' field"
+      "note": "Only 'watchlistName' is present on the node from isFlaggedByWatchlistEntries; there is no 'entityName'."
+    },
+    "LegalEntityBankruptcy": {
+      "incorrect": [],
+      "correct": "caseNumber, filingDate, chapterType, debtorName, trustee, judge, petition, entryDate, dateConverted, dateDismissed, dateTerminated, debtorDischargedDate, planConfirmedDate"
     },
     "LegalEntity.persons": {
       "incorrect": [],
-      "correct": "registeredEntities → registrations → roles → legalEntities → names",
-      "note": "LegalEntity.persons is USUALLY EMPTY. To find officers/people, traverse: registeredEntities → registrations → roles → legalEntities → names. People are modeled as LegalEntity nodes."
-    },
-    "Registration": {
-      "incorrect": [],
-      "correct": "roles",
-      "note": "Registration has 'roles' connection (type 'RegistrationRoleConnection') — this is where officers, agents, and contacts live"
-    },
-    "Role": {
-      "incorrect": [],
-      "correct": "legalEntities",
-      "note": "Role has 'legalEntities' connection back to the person/entity performing the role; also has 'emailAddresses', 'phoneNumbers', 'operatingLocations', 'registrations', 'brands' connections"
+      "correct": "persons(first:N){edges{node{names(first:1){edges{node{firstName lastName fullName}}}}}}",
+      "note": "Populatedness is type-dependent: person-type LE nodes (reached via OL roles, or via registration roles) return populated persons; business-type LE nodes usually return empty. For officers traverse registeredEntities -> registrations -> roles -> legalEntities -> persons."
     }
   },
   "common_mistakes": [
-    {
-      "mistake": "Using 'status' on OperatingLocationOperatingStatus",
-      "correction": "Use 'operatingStatus' instead"
-    },
-    {
-      "mistake": "Using 'url' on Website",
-      "correction": "Use 'website' instead"
-    },
-    {
-      "mistake": "Accessing Person.fullName directly",
-      "correction": "Traverse: Person → names → edges → node → fullName"
-    },
-    {
-      "mistake": "Using LegalEntity.persons to find officers",
-      "correction": "Use: LegalEntity → registeredEntities → registrations → roles → legalEntities"
-    },
-    {
-      "mistake": "Using 'amount' or 'transactionDate' on BrandCardTransaction",
-      "correction": "Use 'projectedQuantity' for amounts, 'periodStartDate'/'periodEndDate' for dates"
-    },
-    {
-      "mistake": "Requesting totalCount on connections",
-      "correction": "Connections do NOT support totalCount. Paginate and count manually, or use hasNextPage to detect more results."
-    }
+    { "mistake": "edges/node on search", "correction": "search returns [SearchUnion]; use __typename + inline fragments" },
+    { "mistake": "plain 'names { name }' on a connection", "correction": "names(first:1){edges{node{name}}}" },
+    { "mistake": "declaring a connection-conditions variable as Conditions", "correction": "connection args take ConnectionConditions (no limit)" },
+    { "mistake": "prompt with entityType OPERATING_LOCATION on search", "correction": "prompt search requires entityType BRAND (OL prompt only works for aggregate/export)" },
+    { "mistake": "aggregate with entityType BRAND", "correction": "aggregate requires entityType OPERATING_LOCATION; use conditions.filter not prompt for accurate counts" },
+    { "mistake": "Requesting totalCount on connections", "correction": "Not supported. Use aggregate / node-level count, or pageInfo.hasNextPage." },
+    { "mistake": "HAS with a scalar leaf path", "correction": "HAS operand must be a path to a connection/type, e.g. HAS:['operatingLocations.phoneNumbers']" }
   ],
   "introspection_template": "python3 << 'PYEOF'\nimport json, urllib.request, os\nquery = '{ __type(name: \"TYPE_NAME_HERE\") { fields { name type { name kind ofType { name } } } } }'\npayload = json.dumps({'query': query})\nreq = urllib.request.Request('https://api.enigma.com/graphql', data=payload.encode(),\n    headers={'content-type': 'application/json', 'x-api-key': os.environ['ENIGMA_API_KEY']})\ndata = json.loads(urllib.request.urlopen(req).read())\nfor f in data['data']['__type']['fields']:\n    print(f\"{f['name']}: {f['type']['name'] or f['type']['kind']}\")\nPYEOF"
 }

@@ -9,12 +9,11 @@ Card transactions are on both `Brand` and `OperatingLocation` entities. Brand-le
 | `quantityType` | String | Metric type (see below) |
 | `period` | String | `"12m"` (rolling 12-month) or `"1m"` (monthly) |
 | `projectedQuantity` | Float | Projected/estimated total — **primary display value** |
-| `rawQuantity` | Float | Raw observed value (before projection) |
 | `platformBrandId` | UUID | Specific data platform UUID, or `null` for the **aggregate** |
-| `rank` | Int | Time ordering: 0 = most recent period, 1 = previous, etc. |
 | `periodStartDate` | Date | Start of the rolling measurement period |
 | `periodEndDate` | Date | End of the rolling measurement period |
-| `datasetIds` | [String] | Dataset identifiers for the transaction data |
+
+> **`rawQuantity` does NOT exist on `BrandCardTransaction`** (it's `OperatingLocationCardTransaction`-only) — querying it is HTTP 400. `rank` is a valid **filter** path (0 = most recent) but is not a returned scalar; do not select it.
 
 ## quantityType Values
 
@@ -27,7 +26,7 @@ Card transactions are on both `Brand` and `OperatingLocation` entities. Brand-le
 | `card_customers_average_daily_count` | Average daily unique card customers | Brand + OL |
 | `avg_transaction_size` | Average transaction amount in dollars | Brand + OL |
 | `refunds_amount` | Total refund amount in dollars | Brand + OL |
-| `card_not_present_revenue_amount` | Card-not-present revenue (online/phone) | **Brand only** — most recent period only |
+| `card_not_present_revenue_amount` | Card-not-present revenue (online/phone) | **Brand only** — `period: "12m"` only, multi-period history available |
 | `has_transactions` | `1` if active, `0` otherwise | **OL only** — always populated (never null) |
 
 ## Aggregate vs Per-Platform Records
@@ -77,15 +76,16 @@ Without this filter, revenue appears **2x-5x higher** due to double-counting (ag
 | `platformBrandId` filter | **Required** (IS_NULL for aggregate) | **Do NOT use** (field doesn't exist) |
 | `period` values | `"12m"`, `"1m"` | `"12m"`, `"3m"`, `"1m"` (quarterly available) |
 | `has_transactions` metric | Not available | Available (binary, never null) |
-| `card_not_present_revenue_amount` | Available (recent only) | Not available |
+| `card_not_present_revenue_amount` | Available (`12m` only, multi-period history) | Not available |
+| `rawQuantity` field | **Not present** (projectedQuantity only) | Present (rawQuantity + projectedQuantity) |
 | `firstObservedDate` / `lastObservedDate` | Not available | Available (data coverage dates) |
 | Null handling | N/A | `projectedQuantity`/`rawQuantity` may be null below compliance threshold |
 
-## Temporal Consistency
+## Temporal Ordering
 
-For queries with 2+ card transaction metrics, use explicit `periodEndDate` instead of `rank=0` to prevent misalignment:
-```json
-{ "EQ": ["periodEndDate", "2024-12-31"] }
-```
+Card-transaction records come back in `periodEndDate`-descending order, so:
+- Latest snapshot: `first: 1`
+- Latest 12 monthly/rolling periods: `first: 12`
+- A specific historical period: `{ "EQ": ["periodEndDate", "2024-12-31"] }`
 
-**Limited historical availability**: `card_not_present_revenue_amount` (1-3 months only). All other metrics have full historical data.
+`{ "EQ": ["rank", 0] }` (most-recent) is also a valid filter and is interchangeable with `first: 1`. All metrics including `card_not_present_revenue_amount` carry multi-period history at `period: "12m"`.

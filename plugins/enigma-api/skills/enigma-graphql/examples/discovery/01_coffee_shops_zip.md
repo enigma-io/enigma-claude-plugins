@@ -2,13 +2,14 @@
 
 ## User Intent
 
-Find all coffee shops operating in specific zip codes (12983, 12946, 12989) that are currently open.
+Find all coffee shops operating in specific zip codes (10001, 10002) that are currently open.
 
 ## Key Concepts
 
 - Use `prompt` (NOT `name`) for semantic industry discovery
-- Only works with `entityType: BRAND`
-- Use `conditions.filter` on `SearchInput` to narrow by geography and operating status
+- Only works with `entityType: BRAND` (prompt + OPERATING_LOCATION → 400)
+- Use `conditions.filter` on `SearchInput` to narrow by geography and operating status (this `conditions` is type `Conditions`, which supports `limit`)
+- The nested `operatingLocations(conditions:)` arg is type `ConnectionConditions` (filter/orderBy only — NO limit)
 - Field path for zip codes: `operatingLocations.addresses.zip`
 - Field path for operating status: `operatingLocations.operatingStatuses.operatingStatus`
 
@@ -22,16 +23,16 @@ Find all coffee shops operating in specific zip codes (12983, 12946, 12989) that
     "conditions": {
       "filter": {
         "AND": [
-          { "IN": ["operatingLocations.addresses.zip", ["12983", "12946", "12989"]] },
+          { "IN": ["operatingLocations.addresses.zip", ["10001", "10002"]] },
           { "EQ": ["operatingLocations.operatingStatuses.operatingStatus", "Open"] }
         ]
       },
-      "limit": 50
+      "limit": 25
     }
   },
   "locConditions": {
     "filter": {
-      "IN": ["addresses.zip", ["12983", "12946", "12989"]]
+      "IN": ["addresses.zip", ["10001", "10002"]]
     }
   }
 }
@@ -39,13 +40,16 @@ Find all coffee shops operating in specific zip codes (12983, 12946, 12989) that
 
 ## GraphQL Query
 
+`search` returns `[SearchUnion]` — you MUST select with `__typename` + inline fragments. Never use `edges { node }` directly on `search`. Every nested field is a Relay connection (`field(first: N) { edges { node { ... } } }`).
+
 ```graphql
 query DiscoverCoffeeShops($searchInput: SearchInput!, $locConditions: ConnectionConditions) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Brand {
       id
-      names: names(first: 1) { edges { node { name } } }
-      industries: industries(first: 3) {
+      names(first: 1) { edges { node { name } } }
+      industries(first: 3) {
         edges {
           node {
             industryDesc
@@ -54,12 +58,12 @@ query DiscoverCoffeeShops($searchInput: SearchInput!, $locConditions: Connection
           }
         }
       }
-      websites: websites(first: 1) { edges { node { website } } }
+      websites(first: 1) { edges { node { website } } }
       operatingLocations(first: 50, conditions: $locConditions) {
         edges {
           node {
-            names: names(first: 1) { edges { node { name } } }
-            addresses: addresses(first: 1) {
+            names(first: 1) { edges { node { name } } }
+            addresses(first: 1) {
               edges {
                 node {
                   fullAddress
@@ -68,21 +72,21 @@ query DiscoverCoffeeShops($searchInput: SearchInput!, $locConditions: Connection
                 }
               }
             }
-            phoneNumbers: phoneNumbers(first: 1) {
+            phoneNumbers(first: 1) {
               edges {
                 node {
                   phoneNumber
                 }
               }
             }
-            operatingStatuses: operatingStatuses(first: 1) {
+            operatingStatuses(first: 1) {
               edges {
                 node {
                   operatingStatus
                 }
               }
             }
-            reviewSummaries: reviewSummaries(first: 1) {
+            reviewSummaries(first: 1) {
               edges {
                 node {
                   reviewScoreAvg
@@ -110,12 +114,11 @@ query DiscoverCoffeeShops($searchInput: SearchInput!, $locConditions: Connection
 
 **Example:**
 ```
-Found 8 coffee shop brands operating in zip codes 12983, 12946, 12989:
+Found 25 coffee shop brands operating in zip codes 10001, 10002:
 
 | Brand | Location | Address | Phone | Rating | Status |
 |---|---|---|---|---|---|
-| Starbucks | Starbucks - Lake Placid | 123 Main St, Lake Placid, 12946 | (518) 555-0100 | 4.2 (150 reviews) | Open |
-| Dunkin' | Dunkin' - Saranac Lake | 456 Broadway, Saranac Lake, 12983 | (518) 555-0200 | 4.0 (89 reviews) | Open |
+| THE HIGHLINE CAFE | THE HIGHLINE CAFE | ..., New York, 10001 | (212) 555-0100 | 4.2 (150 reviews) | Open |
 | ... | ... | ... | ... | ... | ... |
 ```
 
@@ -123,28 +126,28 @@ Found 8 coffee shop brands operating in zip codes 12983, 12946, 12989:
 
 1. ❌ **Using `name` instead of `prompt`**:
    ```json
-   { "name": "coffee shop", "entityType": "BRAND" }  // WRONG - returns nothing
+   { "name": "coffee shop", "entityType": "BRAND" }  // WRONG - name is entity resolution, not industry
    ```
    ✅ Use:
    ```json
    { "prompt": "coffee shop", "entityType": "BRAND" }  // CORRECT
    ```
 
-2. ❌ **Searching OPERATING_LOCATION by industry**:
+2. ❌ **Searching OPERATING_LOCATION by industry prompt**:
    ```json
-   { "prompt": "coffee shop", "entityType": "OPERATING_LOCATION" }  // WRONG - prompt only works with BRAND
+   { "prompt": "coffee shop", "entityType": "OPERATING_LOCATION" }  // WRONG - 400 "Use entity type BRAND instead"
    ```
 
 3. ❌ **Using `postalCode` in filter**:
    ```json
-   { "IN": ["operatingLocations.addresses.postalCode", ["12983"]] }  // WRONG - field is 'zip'
+   { "IN": ["operatingLocations.addresses.postalCode", ["10001"]] }  // WRONG - field is 'zip'
    ```
    ✅ Use:
    ```json
-   { "IN": ["operatingLocations.addresses.zip", ["12983"]] }  // CORRECT
+   { "IN": ["operatingLocations.addresses.zip", ["10001"]] }  // CORRECT
    ```
 
-4. ❌ **Lowercase values**:
+4. ❌ **Lowercase filter values**:
    ```json
    { "EQ": ["operatingLocations.operatingStatuses.operatingStatus", "open"] }  // WRONG
    ```
@@ -185,7 +188,7 @@ Found 8 coffee shop brands operating in zip codes 12983, 12946, 12989:
     "conditions": {
       "filter": {
         "AND": [
-          { "EQ": ["operatingLocations.addresses.city", "LAKE PLACID"] },
+          { "EQ": ["operatingLocations.addresses.city", "NEW YORK"] },
           { "EQ": ["operatingLocations.addresses.state", "NY"] }
         ]
       },
@@ -197,6 +200,8 @@ Found 8 coffee shop brands operating in zip codes 12983, 12946, 12989:
 
 ### With Phone Number Requirement
 
+`HAS` operand must be a path to a connection (TYPE), not a scalar leaf — use `operatingLocations.phoneNumbers`, not `...phoneNumber`.
+
 ```json
 {
   "searchInput": {
@@ -205,7 +210,7 @@ Found 8 coffee shop brands operating in zip codes 12983, 12946, 12989:
     "conditions": {
       "filter": {
         "AND": [
-          { "IN": ["operatingLocations.addresses.zip", ["12983", "12946"]] },
+          { "IN": ["operatingLocations.addresses.zip", ["10001", "10002"]] },
           { "HAS": ["operatingLocations.phoneNumbers"] }
         ]
       },
@@ -223,20 +228,21 @@ import json, urllib.request, os
 
 query = '''query DiscoverCoffeeShops($searchInput: SearchInput!, $locConditions: ConnectionConditions) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Brand {
       id
-      names: names(first: 1) { edges { node { name } } }
+      names(first: 1) { edges { node { name } } }
       operatingLocations(first: 50, conditions: $locConditions) {
         edges {
           node {
-            names: names(first: 1) { edges { node { name } } }
-            addresses: addresses(first: 1) {
+            names(first: 1) { edges { node { name } } }
+            addresses(first: 1) {
               edges { node { fullAddress city zip } }
             }
-            phoneNumbers: phoneNumbers(first: 1) {
+            phoneNumbers(first: 1) {
               edges { node { phoneNumber } }
             }
-            operatingStatuses: operatingStatuses(first: 1) {
+            operatingStatuses(first: 1) {
               edges { node { operatingStatus } }
             }
           }
@@ -253,15 +259,15 @@ variables = {
     "conditions": {
       "filter": {
         "AND": [
-          { "IN": ["operatingLocations.addresses.zip", ["12983", "12946", "12989"]] },
+          { "IN": ["operatingLocations.addresses.zip", ["10001", "10002"]] },
           { "EQ": ["operatingLocations.operatingStatuses.operatingStatus", "Open"] }
         ]
       },
-      "limit": 50
+      "limit": 25
     }
   },
   "locConditions": {
-    "filter": { "IN": ["addresses.zip", ["12983", "12946", "12989"]] }
+    "filter": { "IN": ["addresses.zip", ["10001", "10002"]] }
   }
 }
 

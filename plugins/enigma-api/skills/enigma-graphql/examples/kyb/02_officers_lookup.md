@@ -9,15 +9,17 @@ Look up the corporate structure of a business and find all officers, directors, 
 - Start with `BRAND` entity type using `name` (entity resolution)
 - Traverse: `BRAND → legalEntities → registeredEntities → registrations → roles → legalEntities`
 - **CRITICAL**: Officers are on `Registration.roles`, NOT `LegalEntity.persons` (which is usually empty)
-- People are modeled as `LegalEntity` nodes with `names` connection
-- `Role` has `jobTitle`, `jobFunction`, `managementLevel` fields
+- People are modeled as `LegalEntity` nodes (use the `names` connection, field `name`) and can also be resolved to `persons` (with `firstName`/`lastName`/`fullName`)
+- `Role` has `jobTitle`, `jobFunction`, `managementLevel` fields — NO `title`, NO `names`
+- `search` returns `[SearchUnion]` — select with `__typename` + inline fragments, never `edges { node }` on `search` itself
+- Every nested field is a Relay connection: `field(first: N) { edges { node { ... } } }`
 
 ## Variables
 
 ```json
 {
   "searchInput": {
-    "name": "Nike",
+    "name": "Tacombi",
     "entityType": "BRAND"
   }
 }
@@ -28,17 +30,18 @@ Look up the corporate structure of a business and find all officers, directors, 
 ```graphql
 query CorporateStructure($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Brand {
       id
-      names: names(first: 1) { edges { node { name } } }
-      websites: websites(first: 1) { edges { node { website } } }
+      names(first: 1) { edges { node { name } } }
+      websites(first: 1) { edges { node { website } } }
       legalEntities(first: 10) {
         edges {
           node {
-            names: names(first: 1) { edges { node { name } } }
-            types: types(first: 1) { edges { node { type } } }
-            tins: tins(first: 1) { edges { node { tin } } }
-            addresses: addresses(first: 1) {
+            names(first: 1) { edges { node { name } } }
+            types(first: 1) { edges { node { legalEntityType } } }
+            tins(first: 1) { edges { node { tin } } }
+            addresses(first: 1) {
               edges {
                 node {
                   fullAddress
@@ -58,7 +61,7 @@ query CorporateStructure($searchInput: SearchInput!) {
                       node {
                         registrationState
                         status
-                        jurisdictionCode
+                        jurisdictionType
                         fileNumber
                         roles(first: 20) {
                           edges {
@@ -69,36 +72,29 @@ query CorporateStructure($searchInput: SearchInput!) {
                               legalEntities(first: 3) {
                                 edges {
                                   node {
-                                    names: names(first: 1) {
+                                    names(first: 1) {
+                                      edges { node { name } }
+                                    }
+                                    persons(first: 1) {
                                       edges {
                                         node {
-                                          name
+                                          names(first: 1) {
+                                            edges { node { firstName lastName fullName } }
+                                          }
                                         }
                                       }
                                     }
-                                    addresses: addresses(first: 1) {
-                                      edges {
-                                        node {
-                                          fullAddress
-                                        }
-                                      }
+                                    addresses(first: 1) {
+                                      edges { node { fullAddress } }
                                     }
                                   }
                                 }
                               }
-                              emailAddresses: emailAddresses(first: 1) {
-                                edges {
-                                  node {
-                                    emailAddress
-                                  }
-                                }
+                              emailAddresses(first: 1) {
+                                edges { node { emailAddress } }
                               }
-                              phoneNumbers: phoneNumbers(first: 1) {
-                                edges {
-                                  node {
-                                    phoneNumber
-                                  }
-                                }
+                              phoneNumbers(first: 1) {
+                                edges { node { phoneNumber } }
                               }
                             }
                           }
@@ -127,45 +123,47 @@ query CorporateStructure($searchInput: SearchInput!) {
 **Example:**
 
 ```
-## Nike Corporate Structure
+## Tacombi Corporate Structure
 
-**Brand**: Nike, Inc.
-**Website**: https://www.nike.com
+**Brand**: Tacombi
+**Website**: https://www.tacombi.com
 
 ### Legal Entities
 
 | Legal Entity | Type | TIN | Address | Formation Year |
 |---|---|---|---|---|
-| NIKE, Inc. | Corporation | 93-0584541 | One Bowerman Drive, Beaverton, OR | 1964 |
-| Nike Retail Services, Inc. | Corporation | XX-XXXXXXX | One Bowerman Drive, Beaverton, OR | 1995 |
+| TACOS ESPECIALES DEL MERCADO DE FULTON LLC | LLC | XX-XXXXXXX | New York, NY | 2015 |
 
 ### Officers & Registered Agents
 
-**NIKE, Inc. (Oregon Registration #123456)**
-- Status: Active
+**Registration (New York, Active)**
 
 | Name | Title | Function | Management Level | Contact |
 |---|---|---|---|---|
-| John H. Donahoe II | Chief Executive Officer | executive | C-Level | - |
-| Matthew Friend | Chief Financial Officer | finance | C-Level | - |
-| Corporation Service Company | Registered Agent | agent | - | (503) 555-0100 |
+| JOSHUA OMIN | manager | - | - | - |
+| JOHN D WOLOS | manager | - | - | - |
+| DIETER WIECHMANN | manager | - | - | - |
+| NATIONAL REGISTERED AGENTS, INC | registered agent | - | - | - |
 ```
 
 ## Common Mistakes to Avoid
 
-1. ❌ **Using `LegalEntity.persons` to find officers**:
+1. ❌ **Using `LegalEntity.persons` directly on the searched entity to find officers**:
    ```graphql
    legalEntities {
-     persons { edges { node { names } } }  // WRONG - usually empty
+     persons { edges { node { names } } }  // WRONG - usually empty at the top level
    }
    ```
-   ✅ Use:
+   ✅ Use the registration-roles path; the role's `legalEntities` node carries the person:
    ```graphql
    legalEntities {
      registeredEntities {
        registrations {
          roles {
-           legalEntities { names }  // CORRECT - people are LegalEntity nodes
+           legalEntities {
+             names { edges { node { name } } }            // person name as LegalEntityName
+             persons { edges { node { names { edges { node { firstName lastName fullName } } } } } }
+           }
          }
        }
      }
@@ -181,26 +179,22 @@ query CorporateStructure($searchInput: SearchInput!) {
    roles { edges { node { jobTitle } } }  // CORRECT
    ```
 
-3. ❌ **Accessing `Person.fullName` directly**:
+3. ❌ **Selecting `type` on the `types` connection node**:
    ```graphql
-   person { fullName }  // WRONG
+   types { edges { node { type } } }  // WRONG - field is legalEntityType
    ```
    ✅ Use:
    ```graphql
-   legalEntities {
-     names { edges { node { name } } }  // CORRECT - people are LegalEntity nodes with names connection
-   }
+   types { edges { node { legalEntityType } } }  // CORRECT
    ```
 
-4. ❌ **Expecting `jurisdictionCode` on `RegisteredEntity`**:
+4. ❌ **Expecting `jurisdiction` / `jurisdictionCode` on `Registration`**:
    ```graphql
-   registeredEntities { jurisdictionCode }  // WRONG
+   registrations { edges { node { jurisdictionCode } } }  // WRONG
    ```
-   ✅ Use:
+   ✅ Use `registrationState` and `jurisdictionType`:
    ```graphql
-   registeredEntities {
-     registrations { edges { node { jurisdictionCode } } }  // CORRECT - on Registration
-   }
+   registrations { edges { node { registrationState jurisdictionType } } }  // CORRECT
    ```
 
 ## Variations
@@ -211,10 +205,18 @@ query CorporateStructure($searchInput: SearchInput!) {
 query ByState($searchInput: SearchInput!, $regConditions: ConnectionConditions) {
   search(searchInput: $searchInput) {
     ... on Brand {
-      legalEntities {
-        registeredEntities {
-          registrations(first: 5, conditions: $regConditions) {
-            edges { node { ... } }
+      legalEntities(first: 10) {
+        edges {
+          node {
+            registeredEntities(first: 5) {
+              edges {
+                node {
+                  registrations(first: 5, conditions: $regConditions) {
+                    edges { node { registrationState status jurisdictionType fileNumber } }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -225,48 +227,54 @@ query ByState($searchInput: SearchInput!, $regConditions: ConnectionConditions) 
 
 ```json
 {
+  "searchInput": { "name": "Tacombi", "entityType": "BRAND" },
   "regConditions": {
-    "filter": { "EQ": ["registrationState", "DE"] }
+    "filter": { "EQ": ["registrationState", "NY"] }
   }
 }
 ```
+
+> Note: `registrations` connection conditions use type `ConnectionConditions` ( `{ filter, orderBy }` — no `limit`/`pageToken` ).
 
 ### Include Watchlist Screening
 
 ```graphql
-legalEntities {
-  names { edges { node { name } } }
-  isFlaggedByWatchlistEntries {
-    edges {
-      node {
-        watchlistName
+legalEntities(first: 5) {
+  edges {
+    node {
+      names(first: 1) { edges { node { name } } }
+      isFlaggedByWatchlistEntries(first: 5) {
+        edges {
+          node { watchlistName }
+        }
       }
-      confidence
-    }
-  }
-  appearsOnWatchlistEntries {
-    edges {
-      node {
-        watchlistName
+      appearsOnWatchlistEntries(first: 5) {
+        edges {
+          node { watchlistName }
+        }
       }
-      confidence
     }
   }
 }
 ```
 
+> `WatchlistEntry` exposes `watchlistName` (there is no `entityName`). These connections are legitimately empty for clean entities.
+
 ### Check for Bankruptcies
 
 ```graphql
-legalEntities {
-  names { edges { node { name } } }
-  bankruptcies {
-    edges {
-      node {
-        caseNumber
-        filingDate
-        chapterType
-        dispositionType
+legalEntities(first: 5) {
+  edges {
+    node {
+      names(first: 1) { edges { node { name } } }
+      bankruptcies(first: 5) {
+        edges {
+          node {
+            caseNumber
+            filingDate
+            chapterType
+          }
+        }
       }
     }
   }
@@ -281,15 +289,16 @@ import json, urllib.request, os
 
 query = '''query CorporateStructure($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Brand {
       id
-      names: names(first: 1) { edges { node { name } } }
+      names(first: 1) { edges { node { name } } }
       legalEntities(first: 10) {
         edges {
           node {
-            names: names(first: 1) { edges { node { name } } }
-            types: types(first: 1) { edges { node { type } } }
-            tins: tins(first: 1) { edges { node { tin } } }
+            names(first: 1) { edges { node { name } } }
+            types(first: 1) { edges { node { legalEntityType } } }
+            tins(first: 1) { edges { node { tin } } }
             registeredEntities(first: 5) {
               edges {
                 node {
@@ -308,7 +317,7 @@ query = '''query CorporateStructure($searchInput: SearchInput!) {
                               legalEntities(first: 3) {
                                 edges {
                                   node {
-                                    names: names(first: 1) {
+                                    names(first: 1) {
                                       edges { node { name } }
                                     }
                                   }
@@ -332,7 +341,7 @@ query = '''query CorporateStructure($searchInput: SearchInput!) {
 
 variables = {
   "searchInput": {
-    "name": "Nike",
+    "name": "Tacombi",
     "entityType": "BRAND"
   }
 }

@@ -19,6 +19,7 @@ Find a specific person and discover all companies they're associated with.
 ```graphql
 query PersonSearch($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Person {
       id
       names(first: 3) {
@@ -35,7 +36,7 @@ query PersonSearch($searchInput: SearchInput!) {
         edges { node {
           id
           names(first: 1) { edges { node { name } } }
-          types(first: 1) { edges { node { type } } }
+          types(first: 1) { edges { node { legalEntityType } } }
           roles(first: 30, conditions: { filter: { HAS: ["registrations"] } }) {
             edges { node {
               jobTitle
@@ -104,6 +105,7 @@ Deduplicate by registeredEntity ID. Each role → registration → registeredEnt
 ```graphql
 query BrandContacts($searchInput: SearchInput!) {
   search(searchInput: $searchInput) {
+    __typename
     ... on Brand {
       id
       names(first: 1) { edges { node { name } } }

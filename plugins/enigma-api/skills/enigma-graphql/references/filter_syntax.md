@@ -21,7 +21,9 @@ Connections accept `conditions: { filter: JSON }` for server-side filtering. The
 | `IN` | In array (multiple values) | `{ "IN": ["addresses.state", ["NY", "CA", "TX"]] }` |
 | `LIKE` | Pattern matching (case-sensitive) | `{ "LIKE": ["names.name", "%Coffee%"] }` |
 | `ILIKE` | Pattern matching (case-insensitive) | `{ "ILIKE": ["names.name", "%coffee%"] }` |
-| `HAS` | Field exists / has value | `{ "HAS": ["phoneNumbers"] }` |
+| `HAS` | Connection/type exists (operand = path to a TYPE, not a scalar leaf) | `{ "HAS": ["operatingLocations.phoneNumbers"] }` |
+| `IS_NULL` | Field is null (single-element array) | `{ "IS_NULL": ["platformBrandId"] }` |
+| `IS_NOT_NULL` | Field is not null (single-element array) | `{ "IS_NOT_NULL": ["platformBrandId"] }` |
 
 ## Logical Operators
 
@@ -49,8 +51,8 @@ Field paths use dot notation to traverse from the parent entity into related ent
 | Operating status | `operatingLocations.operatingStatuses.operatingStatus` | `"Open"` or `"Closed"` |
 | Industry code (NAICS) | `industries.industryCode` | 6-digit string (e.g., `"722515"`) |
 | Industry type | `industries.industryType` | `"naics_2022_code"` |
-| Has phone | `operatingLocations.roles.phoneNumbers` | Use `HAS` operator |
-| Has email | `operatingLocations.roles.emailAddresses` | Use `HAS` operator |
+| Has phone | `operatingLocations.phoneNumbers` | Use `HAS` operator (path to a connection) |
+| Has email | `operatingLocations.roles.emailAddresses` | Use `HAS` operator (email lives on roles) |
 
 #### On OperatingLocation Connection
 
@@ -68,8 +70,8 @@ Field paths use dot notation to traverse from the parent entity into related ent
 |---|---|---|
 | Period | `period` | `"12m"` or `"1m"` |
 | Quantity type | `quantityType` | `"card_revenue_amount"`, `"card_transactions_count"`, etc. |
-| Rank (time ordering) | `rank` | Integer (0 = most recent) |
-| Platform brand ID | `platformBrandId` | UUID string, or use `{ "NOT": [{ "NE": ["platformBrandId"] }] }` for NULL (aggregate) |
+| Rank (time ordering) | `rank` | Integer (0 = most recent). Valid filter path even though not a returned scalar. |
+| Platform brand ID (brand level) | `platformBrandId` | Filter NULL with `{ "IS_NULL": ["platformBrandId"] }` (mandatory at brand level; field absent at OL level) |
 
 ## Examples
 
@@ -110,15 +112,13 @@ Field paths use dot notation to traverse from the parent entity into related ent
 
 ### IS NULL Pattern (platformBrandId)
 
-The filter DSL has no `IS_NULL` operator. To filter for NULL values, use:
+Use the `IS_NULL` operator with a single-element array (path only). Verified working:
 
 ```json
-{ "NOT": [{ "NE": ["platformBrandId"] }] }
+{ "IS_NULL": ["platformBrandId"] }
 ```
 
-This means "platformBrandId IS NULL" because:
-- `NE` with a single argument means "is not null"
-- `NOT` negates it to "is null"
+This is the mandatory brand-level card-transaction dedup filter. `IS_NOT_NULL` is the inverse.
 
 ### Pattern Matching (LIKE/ILIKE)
 

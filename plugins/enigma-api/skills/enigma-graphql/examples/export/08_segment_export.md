@@ -4,9 +4,10 @@ Use `output: { filename }` on `SearchInput` for large result sets (hundreds/thou
 
 ## Key Concepts
 
-- Uses `entityType: OPERATING_LOCATION` (not BRAND)
+- Export REQUIRES `entityType: OPERATING_LOCATION` — `output: { filename }` with `entityType: BRAND` returns a 400
 - Industry filtering uses `enigma_industry_description` (not NAICS codes)
-- Response comes in `extensions.backgroundTasks`, not `data.search`
+- Response comes in `extensions.backgroundTasks`, not `data.search` (`data.search` is `null`)
+- The signed S3 URL is at `extensions.backgroundTasks[0].result[0]`
 - Pre-signed S3 URL expires ~6 days
 - Use field aliases for descriptive column names in output
 
@@ -71,7 +72,7 @@ query SegmentExport($searchInput: SearchInput!) {
 
 ## Response Format
 
-`data.search` is `null`. Results appear in `extensions.backgroundTasks`:
+`data.search` is `null`. Results appear in `extensions.backgroundTasks`. Live-verified shape (the example query above returned a real signed URL):
 
 ```json
 {
@@ -79,12 +80,14 @@ query SegmentExport($searchInput: SearchInput!) {
     "backgroundTasks": [{
       "id": "3e3a12a2-...",
       "status": "SUCCESS",
-      "result": ["https://...s3.amazonaws.com/tmp/olap_output/nail_salons_in_denver_co/..."]
+      "result": ["https://enigma-search-service-prod.s3.amazonaws.com/tmp/olap_output/nail_salons_in_denver_co/..."]
     }]
   },
   "data": { "search": null }
 }
 ```
+
+Read the download URL from `extensions.backgroundTasks[0].result[0]`.
 
 ---
 
